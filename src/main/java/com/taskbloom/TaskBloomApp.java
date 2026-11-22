@@ -5,6 +5,10 @@ import com.taskbloom.model.TareaCompuesta;
 import com.taskbloom.model.TareaSimple;
 import com.taskbloom.model.Usuario;
 import com.taskbloom.service.GestorTareas;
+import com.taskbloom.observer.*;
+import javafx.animation.KeyFrame;
+import javafx.animation.Timeline;
+import javafx.util.Duration;
 import com.taskbloom.persistence.DatosGuardados;
 import com.taskbloom.persistence.RepositorioTareas;
 import com.taskbloom.persistence.RepositorioTareasSQLite;
@@ -34,17 +38,27 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.Locale;
+import java.util.Map;
+import java.util.HashMap;
+import java.util.Set;
+import java.util.Comparator;
 
-/** Presentación JavaFX: delega Composite, State y Strategy al modelo. */
+/** Presentación JavaFX: delega Composite, State, Strategy y Observer al dominio. */
 public final class TaskBloomApp extends Application {
     private final GestorTareas gestor = new GestorTareas();
     private final OrganizadorTareas organizador = new OrganizadorTareas();
+    private final GestorRecordatorios gestorRecordatorios = new GestorRecordatorios();
+    private final GestorNotificaciones gestorNotificaciones = new GestorNotificaciones();
+    private final Map<String, ObservadorUsuario> observadoresEquipo = new HashMap<>();
+    private final Button botonNotificaciones = new Button("🔔  Avisos");
+    private Timeline comprobadorRecordatorios;
     private final List<Usuario> equipo = new ArrayList<>();
     private final RepositorioTareas repositorio = new RepositorioTareasSQLite();
     private Usuario usuarioActual;
     private final Button botonPerfil = new Button();
     private final Label tituloBienvenida = new Label();
     private final VBox lista = new VBox(11);
+    private final VBox proximoAviso = new VBox(6);
     private final Label contadorTotal = new Label();
     private final Label contadorPendientes = new Label();
     private final Label contadorActivas = new Label();
@@ -65,6 +79,8 @@ public final class TaskBloomApp extends Application {
             usuarioActual = equipo.stream().filter(u -> u.obtenerId().equals(datos.idUsuarioActual()))
                     .findFirst().orElse(null);
             modoOscuro = datos.modoOscuro();
+            sincronizarObservadores();
+            repositorio.cargarRecordatorios(gestor, gestorRecordatorios, gestorNotificaciones, equipo);
         } catch (RuntimeException error) {
             mostrarError("Error al abrir los datos", error);
             throw error; // No abrir con datos vacíos si la BD existente no se puede leer.
@@ -85,6 +101,10 @@ public final class TaskBloomApp extends Application {
         actualizarFiltroResponsables();
         actualizarPerfil();
         actualizarVista();
+        comprobarRecordatorios();
+        comprobadorRecordatorios = new Timeline(new KeyFrame(Duration.seconds(60), e -> comprobarRecordatorios()));
+        comprobadorRecordatorios.setCycleCount(Timeline.INDEFINITE);
+        comprobadorRecordatorios.play();
         if (usuarioActual == null) Platform.runLater(this::abrirPerfil);
     }
 
@@ -102,8 +122,8 @@ public final class TaskBloomApp extends Application {
         tareas.setOnAction(e -> busqueda.requestFocus());
         Button personas = menu("♙    Equipo", false);
         personas.setOnAction(e -> abrirEquipo());
-        Label proximamente = new Label("Próximamente: calendario y recordatorios");
-        proximamente.getStyleClass().add("sidebar-hint");
+        Button avisos = menu("♧    Recordatorios", false);
+        avisos.setOnAction(e -> abrirRecordatorios());
         Region espacio = new Region();
         VBox.setVgrow(espacio, Priority.ALWAYS);
         VBox tarjeta = new VBox(7, new Label("🌸"), new Label("Tu jardín está creciendo"),
@@ -112,7 +132,7 @@ public final class TaskBloomApp extends Application {
         botonPerfil.getStyleClass().addAll("nav-item", "profile");
         botonPerfil.setMaxWidth(Double.MAX_VALUE);
         botonPerfil.setOnAction(e -> abrirPerfil());
-        lateral.getChildren().addAll(marca, grupo, inicio, tareas, personas, proximamente, espacio, tarjeta, botonPerfil);
+        lateral.getChildren().addAll(marca, grupo, inicio, tareas, personas, avisos, espacio, tarjeta, botonPerfil);
         return lateral;
     }
 
@@ -147,7 +167,9 @@ public final class TaskBloomApp extends Application {
         Button nueva = new Button("＋  Nueva tarea");
         nueva.getStyleClass().add("primary-button");
         nueva.setOnAction(e -> abrirFormulario(null));
-        cabecera.getChildren().addAll(busqueda, separador, tema, nueva);
+        botonNotificaciones.getStyleClass().add("secondary-button");
+        botonNotificaciones.setOnAction(e -> abrirNotificaciones());
+        cabecera.getChildren().addAll(busqueda, separador, tema, botonNotificaciones, nueva);
         centro.setTop(cabecera);
 
         VBox cuerpo = new VBox(20);
@@ -193,7 +215,8 @@ public final class TaskBloomApp extends Application {
         filtros.getChildren().addAll(new Label("Estado:"), filtro,
                 new Label("Responsable:"), filtroResponsable,
                 new Label("Ordenar por:"), ordenamiento);
-        cuerpo.getChildren().addAll(bienvenida, estadisticas, encabezado, filtros, lista);
+        proximoAviso.getStyleClass().add("reminder-card");
+        cuerpo.getChildren().addAll(bienvenida, estadisticas, encabezado, filtros, lista, proximoAviso);
         ScrollPane scroll = new ScrollPane(cuerpo);
         scroll.setFitToWidth(true);
         scroll.getStyleClass().add("content-scroll");
@@ -220,6 +243,8 @@ public final class TaskBloomApp extends Application {
         contadorActivas.setText(String.valueOf(tareas.stream().filter(t -> t.obtenerEstado() instanceof EstadoEnCurso || t.obtenerEstado() instanceof EstadoEnRevision).count()));
         contadorTerminadas.setText(String.valueOf(tareas.stream().filter(t -> t.obtenerEstado() instanceof EstadoTerminada).count()));
         String texto = busqueda.getText() == null ? "" : busqueda.getText().trim().toLowerCase(Locale.ROOT);
+        actualizarContadorAvisos();
+        actualizarProximoAviso();
         lista.getChildren().clear();
         organizador.organizar(tareas).stream()
                 .filter(t -> t.obtenerTitulo().toLowerCase(Locale.ROOT).contains(texto))
@@ -268,6 +293,7 @@ public final class TaskBloomApp extends Application {
             } else {
                 persistir();
             }
+            comprobarRecordatorios();
             actualizarVista();
         });
         HBox botones = new HBox(5);
@@ -279,6 +305,7 @@ public final class TaskBloomApp extends Application {
         eliminar.setOnAction(e -> {
             Alert confirmar = new Alert(Alert.AlertType.CONFIRMATION, "¿Eliminar «" + tarea.obtenerTitulo() + "»?", ButtonType.YES, ButtonType.NO);
             if (confirmar.showAndWait().orElse(ButtonType.NO) == ButtonType.YES) {
+                quitarAvisoConNotificaciones(tarea.obtenerId());
                 gestor.eliminarTarea(tarea.obtenerId());
                 persistir();
                 actualizarVista();
@@ -401,11 +428,18 @@ public final class TaskBloomApp extends Application {
             return casilla;
         }).toList();
         responsables.getChildren().addAll(seleccionResponsables);
+        ComboBox<String> aviso = new ComboBox<>();
+        aviso.getItems().addAll("Sin recordatorio", "1 hora antes", "6 horas antes", "24 horas antes",
+                "48 horas antes", "7 días antes");
+        Recordatorio previo = tarea == null ? null : gestorRecordatorios.buscarPorTarea(tarea.obtenerId());
+        aviso.setValue(previo == null ? (tarea == null ? "24 horas antes" : "Sin recordatorio")
+                : etiquetaAnticipacion(previo.obtenerAnticipacionHoras()));
         VBox formulario = new VBox(9,
                 new Label("Título"), titulo,
                 new Label("Descripción"), descripcion,
                 new Label("Prioridad"), prioridad,
                 new Label("Fecha límite"), fecha,
+                new Label("Recordatorio"), aviso,
                 new Label("Responsables (selecciona al menos uno)"), responsables,
                 new Label("Subtareas (una por línea)"), subtareas);
         formulario.setPadding(new Insets(14));
@@ -427,21 +461,26 @@ public final class TaskBloomApp extends Application {
             mostrarMensaje("Responsable requerido", "Selecciona al menos un responsable.");
             return;
         }
+        ComponenteTarea tareaGuardada;
         if (tarea != null) {
             gestor.modificarTarea(tarea.obtenerId(), titulo.getText().trim(), descripcion.getText(), valorPrioridad, vencimiento);
             tarea.asignarResponsables(personasElegidas);
+            tareaGuardada = tarea;
         } else {
             List<String> lineas = subtareas.getText().lines().map(String::trim).filter(s -> !s.isEmpty()).toList();
             ComponenteTarea creada = lineas.isEmpty()
                     ? gestor.crearTareaSimple(titulo.getText().trim(), descripcion.getText(), valorPrioridad, vencimiento)
                     : gestor.crearTareaCompuesta(titulo.getText().trim(), descripcion.getText(), valorPrioridad, vencimiento);
             creada.asignarResponsables(personasElegidas);
+            tareaGuardada = creada;
             for (String linea : lineas) {
                 TareaSimple hija = gestor.crearTareaSimple(linea, "", 2, vencimiento);
                 gestor.agregarSubtarea(creada.obtenerId(), hija.obtenerId());
             }
         }
+        configurarAviso(tareaGuardada, horasDeAviso(aviso.getValue()));
         persistir();
+        comprobarRecordatorios();
         actualizarVista();
     }
 
@@ -475,6 +514,7 @@ public final class TaskBloomApp extends Application {
         } else {
             usuarioActual.actualizarNombre(nombre);
         }
+        sincronizarObservadores();
         persistir();
         actualizarPerfil();
         actualizarFiltroResponsables();
@@ -541,6 +581,7 @@ public final class TaskBloomApp extends Application {
                     ButtonType.YES, ButtonType.NO);
             if (confirmar.showAndWait().orElse(ButtonType.NO) != ButtonType.YES) return;
             equipo.remove(elegido);
+            gestorNotificaciones.eliminarPorUsuario(elegido.obtenerId());
             for (ComponenteTarea tarea : gestor.obtenerTareasPrincipales()) quitarResponsable(tarea, elegido.obtenerId());
             miembros.getItems().setAll(equipo);
             cambiosEnEquipo();
@@ -567,6 +608,7 @@ public final class TaskBloomApp extends Application {
     }
 
     private void cambiosEnEquipo() {
+        sincronizarObservadores();
         persistir();
         actualizarFiltroResponsables();
         actualizarPerfil();
@@ -592,7 +634,8 @@ public final class TaskBloomApp extends Application {
 
     private void persistir() {
         try {
-            repositorio.guardarEstado(gestor, equipo, usuarioActual, modoOscuro);
+            repositorio.guardarEstado(gestor, equipo, usuarioActual, modoOscuro,
+                    gestorRecordatorios, gestorNotificaciones);
         } catch (RuntimeException error) {
             mostrarError("No se pudieron guardar los cambios", error);
         }
@@ -605,6 +648,164 @@ public final class TaskBloomApp extends Application {
         aviso.setTitle(titulo);
         aviso.setHeaderText(null);
         aviso.showAndWait();
+    }
+
+    /** Mantiene un ObservadorUsuario suscrito por cada usuario del equipo. */
+    private void sincronizarObservadores() {
+        Set<String> vigentes = equipo.stream().map(Usuario::obtenerId)
+                .collect(java.util.stream.Collectors.toSet());
+        for (String id : List.copyOf(observadoresEquipo.keySet())) {
+            if (!vigentes.contains(id)) {
+                gestorRecordatorios.desuscribir(observadoresEquipo.remove(id));
+            }
+        }
+        for (Usuario u : equipo) {
+            if (!observadoresEquipo.containsKey(u.obtenerId())) {
+                ObservadorUsuario observador = new ObservadorUsuario(u, gestorNotificaciones);
+                observadoresEquipo.put(u.obtenerId(), observador);
+                gestorRecordatorios.suscribir(observador);
+            }
+        }
+    }
+
+    private static String etiquetaAnticipacion(int horas) {
+        return switch (horas) {
+            case 1 -> "1 hora antes";
+            case 6 -> "6 horas antes";
+            case 24 -> "24 horas antes";
+            case 48 -> "48 horas antes";
+            case 168 -> "7 días antes";
+            default -> "Sin recordatorio";
+        };
+    }
+
+    private static Integer horasDeAviso(String etiqueta) {
+        return switch (etiqueta == null ? "" : etiqueta) {
+            case "1 hora antes" -> 1;
+            case "6 horas antes" -> 6;
+            case "24 horas antes" -> 24;
+            case "48 horas antes" -> 48;
+            case "7 días antes" -> 168;
+            default -> null;
+        };
+    }
+
+    private void quitarAvisoConNotificaciones(String idTarea) {
+        Recordatorio anterior = gestorRecordatorios.buscarPorTarea(idTarea);
+        if (anterior != null) {
+            gestorNotificaciones.eliminarPorRecordatorios(Set.of(anterior.obtenerId()));
+            gestorRecordatorios.quitarRecordatorio(idTarea);
+        }
+    }
+
+    private void configurarAviso(ComponenteTarea tarea, Integer horas) {
+        if (horas == null) {
+            quitarAvisoConNotificaciones(tarea.obtenerId());
+            return;
+        }
+        Recordatorio anterior = gestorRecordatorios.buscarPorTarea(tarea.obtenerId());
+        Recordatorio nuevo = gestorRecordatorios.programarRecordatorio(tarea, horas);
+        if (anterior != null && !anterior.obtenerId().equals(nuevo.obtenerId())) {
+            gestorNotificaciones.eliminarPorRecordatorios(Set.of(anterior.obtenerId()));
+        }
+    }
+
+    private void comprobarRecordatorios() {
+        int enviados = gestorRecordatorios.verificarVencimientos();
+        if (enviados > 0) persistir();
+        actualizarContadorAvisos();
+        actualizarProximoAviso();
+    }
+
+    private void actualizarContadorAvisos() {
+        long pendientes = gestorNotificaciones.contarNoLeidas(usuarioActual);
+        botonNotificaciones.setText("🔔  Avisos" + (pendientes > 0 ? " (" + pendientes + ")" : ""));
+        if (pendientes > 0 && !botonNotificaciones.getStyleClass().contains("notification-unread"))
+            botonNotificaciones.getStyleClass().add("notification-unread");
+        else if (pendientes == 0) botonNotificaciones.getStyleClass().remove("notification-unread");
+    }
+
+    private void actualizarProximoAviso() {
+        proximoAviso.getChildren().clear();
+        Label subtitulo = new Label("RECORDATORIOS");
+        subtitulo.getStyleClass().add("eyebrow");
+        Recordatorio siguiente = gestorRecordatorios.obtenerRecordatorios().stream()
+                .filter(r -> !r.estaEnviado() && !(r.obtenerTarea().obtenerEstado() instanceof EstadoTerminada))
+                .min(Comparator.comparing(Recordatorio::obtenerFechaAviso)).orElse(null);
+        Label detalle = new Label(siguiente == null ? "Sin recordatorios pendientes"
+                : "«" + siguiente.obtenerTarea().obtenerTitulo() + "» · avisar el "
+                + siguiente.obtenerFechaAviso().format(DateTimeFormatter.ofPattern("d MMM yyyy, HH:mm", new Locale("es", "ES"))));
+        detalle.getStyleClass().add("task-title");
+        Button ver = new Button("Ver recordatorios");
+        ver.getStyleClass().add("small-button");
+        ver.setOnAction(e -> abrirRecordatorios());
+        proximoAviso.getChildren().addAll(subtitulo, detalle, ver);
+    }
+
+    private void abrirRecordatorios() {
+        Dialog<ButtonType> dialogo = new Dialog<>();
+        dialogo.setTitle("Recordatorios de tareas");
+        dialogo.setHeaderText("Avisos programados para las tareas");
+        dialogo.getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
+        VBox contenido = new VBox(10);
+        List<Recordatorio> ordenados = gestorRecordatorios.obtenerRecordatorios().stream()
+                .sorted(Comparator.comparing(Recordatorio::obtenerFechaAviso)).toList();
+        if (ordenados.isEmpty()) contenido.getChildren().add(new Label("Aún no hay recordatorios. Crea o edita una tarea para programar uno."));
+        for (Recordatorio r : ordenados) {
+            Label titulo = new Label("✿  " + r.obtenerTarea().obtenerTitulo());
+            titulo.getStyleClass().add("task-title");
+            Label detalle = new Label("Aviso: " + r.obtenerFechaAviso().format(DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm"))
+                    + "   ·   " + etiquetaAnticipacion(r.obtenerAnticipacionHoras())
+                    + "   ·   " + (r.estaEnviado() ? "Enviado" : "Pendiente"));
+            detalle.getStyleClass().add("muted");
+            Label destinatarios = new Label("Responsables: " + nombresResponsables(r.obtenerTarea()));
+            destinatarios.getStyleClass().add("muted");
+            VBox tarjeta = new VBox(4, titulo, detalle, destinatarios);
+            tarjeta.getStyleClass().add("task-card");
+            contenido.getChildren().add(tarjeta);
+        }
+        ScrollPane scroll = new ScrollPane(contenido);
+        scroll.setFitToWidth(true);
+        scroll.setPrefViewportHeight(350);
+        scroll.setPrefViewportWidth(500);
+        dialogo.getDialogPane().setContent(scroll);
+        dialogo.showAndWait();
+    }
+
+    private void abrirNotificaciones() {
+        Dialog<ButtonType> dialogo = new Dialog<>();
+        dialogo.setTitle("Mis notificaciones");
+        dialogo.setHeaderText(usuarioActual == null ? "Configura tu perfil para ver tus avisos"
+                : "Notificaciones para " + usuarioActual.obtenerNombre());
+        ButtonType leidas = new ButtonType("Marcar todas como leídas", ButtonBar.ButtonData.APPLY);
+        dialogo.getDialogPane().getButtonTypes().addAll(leidas, ButtonType.CLOSE);
+        VBox contenido = new VBox(9);
+        List<Notificacion> propias = gestorNotificaciones.consultarNotificaciones(usuarioActual);
+        if (propias.isEmpty()) contenido.getChildren().add(new Label("No tienes notificaciones todavía."));
+        for (Notificacion n : propias) {
+            Label titulo = new Label((n.estaLeida() ? "✓  " : "●  ") + n.obtenerMensaje());
+            titulo.setWrapText(true);
+            titulo.getStyleClass().add("task-title");
+            Label fecha = new Label(n.obtenerFechaCreacion().format(DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm")));
+            fecha.getStyleClass().add("muted");
+            VBox tarjeta = new VBox(5, titulo, fecha);
+            tarjeta.getStyleClass().add("task-card");
+            contenido.getChildren().add(tarjeta);
+        }
+        ScrollPane scroll = new ScrollPane(contenido);
+        scroll.setFitToWidth(true);
+        scroll.setPrefViewportWidth(460);
+        scroll.setPrefViewportHeight(330);
+        dialogo.getDialogPane().setContent(scroll);
+        if (dialogo.showAndWait().orElse(ButtonType.CLOSE) == leidas) {
+            gestorNotificaciones.marcarTodasComoLeidas(usuarioActual);
+            persistir();
+            actualizarContadorAvisos();
+        }
+    }
+
+    @Override public void stop() {
+        if (comprobadorRecordatorios != null) comprobadorRecordatorios.stop();
     }
 
     public static void main(String[] args) { launch(args); }

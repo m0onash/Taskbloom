@@ -4,6 +4,10 @@ import com.taskbloom.model.ComponenteTarea;
 import com.taskbloom.model.TareaCompuesta;
 import com.taskbloom.model.TareaSimple;
 import com.taskbloom.model.Usuario;
+import com.taskbloom.observer.GestorRecordatorios;
+import com.taskbloom.observer.GestorNotificaciones;
+import com.taskbloom.observer.Recordatorio;
+import com.taskbloom.observer.Notificacion;
 import com.taskbloom.service.GestorTareas;
 import com.taskbloom.state.EstadoEnCurso;
 import com.taskbloom.state.EstadoEnRevision;
@@ -79,6 +83,23 @@ public final class RepositorioTareasSQLite implements RepositorioTareas {
             st.executeUpdate("""
                     CREATE TABLE IF NOT EXISTS configuracion (
                         clave TEXT PRIMARY KEY, valor TEXT NOT NULL
+                    )""");
+            // Migración no destructiva de la BD creada en la etapa 3.
+            st.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS recordatorios (
+                        id TEXT PRIMARY KEY,
+                        tarea_id TEXT NOT NULL UNIQUE REFERENCES tareas(id) ON DELETE CASCADE,
+                        fecha_aviso TEXT NOT NULL, anticipacion_horas INTEGER NOT NULL,
+                        enviado INTEGER NOT NULL CHECK (enviado IN (0,1))
+                    )""");
+            st.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS notificaciones (
+                        id TEXT PRIMARY KEY,
+                        recordatorio_id TEXT NOT NULL REFERENCES recordatorios(id) ON DELETE CASCADE,
+                        usuario_id TEXT NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+                        mensaje TEXT NOT NULL, fecha_creacion TEXT NOT NULL,
+                        leida INTEGER NOT NULL CHECK (leida IN (0,1)),
+                        UNIQUE(recordatorio_id, usuario_id)
                     )""");
         } catch (SQLException ex) {
             throw new IllegalStateException("No se pudo inicializar SQLite", ex);
@@ -157,14 +178,59 @@ public final class RepositorioTareasSQLite implements RepositorioTareas {
     }
 
     @Override
+    public void cargarRecordatorios(GestorTareas gestor, GestorRecordatorios recordatorios,
+                                    GestorNotificaciones notificaciones, List<Usuario> equipo) {
+        Objects.requireNonNull(gestor);
+        Objects.requireNonNull(recordatorios);
+        Objects.requireNonNull(notificaciones);
+        Map<String, Usuario> porId = new HashMap<>();
+        for (Usuario usuario : equipo) porId.put(usuario.obtenerId(), usuario);
+        try (Connection c = conectar()) {
+            try (Statement st = c.createStatement(); ResultSet rs = st.executeQuery(
+                    "SELECT id,tarea_id,anticipacion_horas,enviado FROM recordatorios ORDER BY rowid")) {
+                while (rs.next()) {
+                    ComponenteTarea tarea = gestor.obtenerTarea(rs.getString("tarea_id"));
+                    recordatorios.registrarRecordatorioRestaurado(new Recordatorio(
+                            rs.getString("id"), tarea, rs.getInt("anticipacion_horas"), rs.getInt("enviado") != 0));
+                }
+            }
+            try (Statement st = c.createStatement(); ResultSet rs = st.executeQuery(
+                    "SELECT id,recordatorio_id,usuario_id,mensaje,fecha_creacion,leida FROM notificaciones ORDER BY rowid")) {
+                while (rs.next()) {
+                    Usuario usuario = porId.get(rs.getString("usuario_id"));
+                    if (usuario == null) throw new IllegalStateException("Destinatario de notificación desconocido");
+                    notificaciones.registrarNotificacionRestaurada(new Notificacion(
+                            rs.getString("id"), usuario, rs.getString("recordatorio_id"),
+                            rs.getString("mensaje"), LocalDateTime.parse(rs.getString("fecha_creacion")),
+                            rs.getInt("leida") != 0));
+                }
+            }
+        } catch (SQLException ex) {
+            throw new IllegalStateException("No se pudieron cargar los recordatorios", ex);
+        }
+    }
+
+    @Override
     public void guardarEstado(GestorTareas gestor, List<Usuario> equipo, Usuario usuarioActual, boolean modoOscuro) {
+        // Compatibilidad con las llamadas de la etapa 3; la aplicación usa la nueva sobrecarga.
+        guardarEstado(gestor, equipo, usuarioActual, modoOscuro,
+                new GestorRecordatorios(), new GestorNotificaciones());
+    }
+
+    @Override
+    public void guardarEstado(GestorTareas gestor, List<Usuario> equipo, Usuario usuarioActual, boolean modoOscuro,
+                              GestorRecordatorios recordatorios, GestorNotificaciones notificaciones) {
         Objects.requireNonNull(gestor);
         Objects.requireNonNull(equipo);
+        Objects.requireNonNull(recordatorios);
+        Objects.requireNonNull(notificaciones);
         try (Connection c = conectar()) {
             c.setAutoCommit(false);
             try {
                 // Instantánea transaccional: eliminaciones persisten y una falla revierte todo.
                 try (Statement st = c.createStatement()) {
+                    st.executeUpdate("DELETE FROM notificaciones");
+                    st.executeUpdate("DELETE FROM recordatorios");
                     st.executeUpdate("DELETE FROM responsables");
                     st.executeUpdate("DELETE FROM tareas");
                     st.executeUpdate("DELETE FROM usuarios");
@@ -187,6 +253,33 @@ public final class RepositorioTareasSQLite implements RepositorioTareas {
                         insertarTarea(tarea, null, tareas, asignaciones);
                     tareas.executeBatch();
                     asignaciones.executeBatch();
+                }
+                try (PreparedStatement st = c.prepareStatement("""
+                        INSERT INTO recordatorios(id,tarea_id,fecha_aviso,anticipacion_horas,enviado)
+                        VALUES(?,?,?,?,?)""")) {
+                    for (Recordatorio r : recordatorios.obtenerRecordatorios()) {
+                        st.setString(1, r.obtenerId());
+                        st.setString(2, r.obtenerTarea().obtenerId());
+                        st.setString(3, r.obtenerFechaAviso().toString());
+                        st.setInt(4, r.obtenerAnticipacionHoras());
+                        st.setInt(5, r.estaEnviado() ? 1 : 0);
+                        st.addBatch();
+                    }
+                    st.executeBatch();
+                }
+                try (PreparedStatement st = c.prepareStatement("""
+                        INSERT INTO notificaciones(id,recordatorio_id,usuario_id,mensaje,fecha_creacion,leida)
+                        VALUES(?,?,?,?,?,?)""")) {
+                    for (Notificacion n : notificaciones.obtenerTodas()) {
+                        st.setString(1, n.obtenerId());
+                        st.setString(2, n.obtenerIdRecordatorio());
+                        st.setString(3, n.obtenerDestinatario().obtenerId());
+                        st.setString(4, n.obtenerMensaje());
+                        st.setString(5, n.obtenerFechaCreacion().toString());
+                        st.setInt(6, n.estaLeida() ? 1 : 0);
+                        st.addBatch();
+                    }
+                    st.executeBatch();
                 }
                 try (PreparedStatement st = c.prepareStatement("INSERT INTO configuracion(clave,valor) VALUES(?,?)")) {
                     st.setString(1, "usuario_actual");
