@@ -1,0 +1,79 @@
+/* Versión JavaFX CSS inspirada en el TSX/CSS de referencia: no es CSS de navegador. */
+.root-app {
+    -fx-font-family: "Arial";
+    -fx-font-size: 13px;
+    -fx-base: #fffef9;
+    -fx-background-color: #f7f6f1;
+    -fx-text-fill: #282b28;
+}
+.sidebar {
+    -fx-padding: 26 15 17 15;
+    -fx-background-color: #f0efe8;
+    -fx-border-color: transparent #e4e2d9 transparent transparent;
+    -fx-border-width: 0 1 0 0;
+}
+.brand { -fx-font-family: Georgia; -fx-font-size: 26px; -fx-font-weight: bold; -fx-text-fill: #62534a; -fx-padding: 0 0 26 7; }
+.eyebrow { -fx-font-size: 10px; -fx-font-weight: bold; -fx-text-fill: #7a7c74; }
+.nav-item {
+    -fx-alignment: CENTER_LEFT; -fx-border-width: 0; -fx-background-color: transparent;
+    -fx-background-radius: 9; -fx-text-fill: #7a7c74; -fx-padding: 13 12;
+}
+.nav-item.active, .nav-item:hover { -fx-background-color: #fffef9; -fx-text-fill: #282b28; }
+.sidebar-hint { -fx-font-size: 11px; -fx-text-fill: #7a7c74; -fx-padding: 17 8; -fx-line-spacing: 5px; }
+.garden-box {
+    -fx-background-color: #f8f2f3; -fx-border-color: #e4e2d9; -fx-border-radius: 11;
+    -fx-background-radius: 11; -fx-padding: 15; -fx-alignment: CENTER;
+}
+.garden-box .label { -fx-text-fill: #62534a; -fx-wrap-text: true; -fx-text-alignment: center; }
+.profile { -fx-padding: 18 5 3; -fx-font-size: 12px; -fx-text-fill: #62534a; }
+.topbar {
+    -fx-padding: 13 32; -fx-background-color: #f7f6f1;
+    -fx-border-color: transparent transparent #e4e2d9 transparent;
+}
+.search-field {
+    -fx-background-color: transparent; -fx-border-color: transparent;
+    -fx-prompt-text-fill: #93958e; -fx-text-fill: #282b28;
+}
+.primary-button { -fx-background-color: #62534a; -fx-text-fill: white; -fx-background-radius: 8; -fx-padding: 11 16; -fx-font-weight: bold; }
+.secondary-button { -fx-background-color: #fffef9; -fx-border-color: #e4e2d9; -fx-border-radius: 8; -fx-background-radius: 8; -fx-padding: 10 14; }
+.content-scroll { -fx-background-color: transparent; -fx-border-width: 0; }
+.content-scroll > .viewport { -fx-background-color: #f7f6f1; }
+.content { -fx-padding: 35 34 55 34; }
+.page-title { -fx-font-family: Georgia; -fx-font-size: 35px; -fx-text-fill: #282b28; }
+.section-title { -fx-font-family: Georgia; -fx-font-size: 27px; -fx-text-fill: #282b28; }
+.muted { -fx-text-fill: #7a7c74; -fx-font-size: 12px; }
+.stat-card {
+    -fx-background-color: #fffef9; -fx-border-color: #e4e2d9; -fx-background-radius: 11;
+    -fx-border-radius: 11; -fx-padding: 17; -fx-pref-width: 200;
+}
+.stat-number { -fx-font-family: Georgia; -fx-font-size: 29px; -fx-text-fill: #282b28; }
+.task-card {
+    -fx-background-color: #fffef9; -fx-border-color: #e4e2d9;
+    -fx-border-radius: 11; -fx-background-radius: 11; -fx-padding: 16 18;
+}
+.task-title { -fx-font-weight: bold; -fx-font-size: 14px; -fx-text-fill: #282b28; }
+.priority-tag { -fx-background-color: #f7e5e9; -fx-text-fill: #9a3b50; -fx-padding: 3 8; -fx-background-radius: 11; -fx-font-size: 10px; }
+.card-meta { -fx-text-fill: #7a7c74; -fx-font-size: 11px; }
+.subtask-list { -fx-padding: 12 0 0 76; -fx-border-color: #e4e2d9 transparent transparent transparent; }
+.small-button { -fx-background-color: #f4f3ed; -fx-background-radius: 6; -fx-padding: 5 8; -fx-text-fill: #62534a; -fx-font-size: 11px; }
+.small-button:hover { -fx-background-color: #eee5e6; }
+.empty { -fx-padding: 35; -fx-text-fill: #7a7c74; }
+.combo-box { -fx-background-color: #f4f3ed; -fx-background-radius: 6; }
+.combo-box .list-cell { -fx-text-fill: #282b28; }
+/* La clase .dark se aplica solo a la raíz JavaFX, no a :root como en navegador. */
+.dark.root-app { -fx-base: #201d20; -fx-background-color: #151315; }
+.dark .sidebar { -fx-background-color: #0e0d0f; -fx-border-color: transparent #383138 transparent transparent; }
+.dark .brand, .dark .profile, .dark .page-title, .dark .section-title,
+.dark .task-title, .dark .stat-number { -fx-text-fill: #f0e8eb; }
+.dark .nav-item.active, .dark .nav-item:hover { -fx-background-color: #201d20; -fx-text-fill: #f0e8eb; }
+.dark .topbar { -fx-background-color: #151315; -fx-border-color: transparent transparent #383138 transparent; }
+.dark .content-scroll > .viewport { -fx-background-color: #151315; }
+.dark .task-card, .dark .stat-card { -fx-background-color: #201d20; -fx-border-color: #383138; }
+.dark .garden-box { -fx-background-color: #282328; -fx-border-color: #383138; }
+.dark .garden-box .label { -fx-text-fill: #f0e8eb; }
+.dark .nav-item, .dark .muted, .dark .sidebar-hint, .dark .eyebrow, .dark .card-meta { -fx-text-fill: #a79da1; }
+.dark .search-field { -fx-text-fill: #f0e8eb; }
+.dark .secondary-button, .dark .small-button, .dark .combo-box { -fx-background-color: #282328; -fx-text-fill: #f0e8eb; }
+.dark .combo-box .list-cell { -fx-text-fill: #f0e8eb; }
+.dark .priority-tag { -fx-background-color: #383138; -fx-text-fill: #ddb1c2; }
+.dark .subtask-list { -fx-border-color: #383138 transparent transparent transparent; }
