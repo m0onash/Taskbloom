@@ -5,6 +5,10 @@ import com.taskbloom.model.TareaCompuesta;
 import com.taskbloom.model.TareaSimple;
 import com.taskbloom.model.Usuario;
 import com.taskbloom.service.GestorTareas;
+import com.taskbloom.strategy.FiltrarPorResponsable;
+import com.taskbloom.strategy.OrdenarPorFecha;
+import com.taskbloom.strategy.OrdenarPorPrioridad;
+import com.taskbloom.strategy.OrganizadorTareas;
 import com.taskbloom.state.*;
 import javafx.application.Application;
 import javafx.geometry.Insets;
@@ -25,9 +29,10 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Locale;
 
-/** Presentación JavaFX. No contiene la lógica de Composite ni de State. */
+/** Presentación JavaFX: delega Composite, State y Strategy al modelo. */
 public final class TaskBloomApp extends Application {
     private final GestorTareas gestor = new GestorTareas();
+    private final OrganizadorTareas organizador = new OrganizadorTareas();
     private final List<Usuario> equipo = List.of(
             new Usuario("u1", "Ana"), new Usuario("u2", "Carlos"),
             new Usuario("u3", "Sofía"), new Usuario("u4", "Marcos"));
@@ -38,12 +43,15 @@ public final class TaskBloomApp extends Application {
     private final Label contadorTerminadas = new Label();
     private final TextField busqueda = new TextField();
     private final ComboBox<String> filtro = new ComboBox<>();
+    private final ComboBox<String> filtroResponsable = new ComboBox<>();
+    private final ComboBox<String> ordenamiento = new ComboBox<>();
     private BorderPane raiz;
     private Scene escena;
     private boolean modoOscuro = false;
 
     @Override public void start(Stage stage) {
         cargarEjemplos();
+        organizador.establecerOrdenamiento(new OrdenarPorPrioridad());
         raiz = new BorderPane();
         raiz.getStyleClass().add("root-app");
         raiz.setLeft(crearBarraLateral());
@@ -136,12 +144,31 @@ public final class TaskBloomApp extends Application {
         Label descripcion = new Label("Cuida cada tarea y observa cómo florece.");
         descripcion.getStyleClass().add("muted");
         VBox encabezado = new VBox(5, seccion, descripcion);
-        HBox filtros = new HBox(12);
+        FlowPane filtros = new FlowPane(12, 8);
         filtros.setAlignment(Pos.CENTER_LEFT);
         filtro.getItems().addAll("Todas", "Pendiente", "En curso", "En revisión", "Terminada");
         filtro.setValue("Todas");
         filtro.setOnAction(e -> actualizarVista());
-        filtros.getChildren().addAll(new Label("Mostrar:"), filtro);
+        filtroResponsable.getItems().add("Todos");
+        equipo.forEach(usuario -> filtroResponsable.getItems().add(usuario.obtenerNombre()));
+        filtroResponsable.setValue("Todos");
+        filtroResponsable.setOnAction(e -> {
+            Usuario elegido = equipo.stream()
+                    .filter(u -> u.obtenerNombre().equals(filtroResponsable.getValue()))
+                    .findFirst().orElse(null);
+            organizador.establecerFiltro(elegido == null ? null : new FiltrarPorResponsable(elegido.obtenerId()));
+            actualizarVista();
+        });
+        ordenamiento.getItems().addAll("Prioridad", "Fecha límite");
+        ordenamiento.setValue("Prioridad");
+        ordenamiento.setOnAction(e -> {
+            organizador.establecerOrdenamiento("Fecha límite".equals(ordenamiento.getValue())
+                    ? new OrdenarPorFecha() : new OrdenarPorPrioridad());
+            actualizarVista();
+        });
+        filtros.getChildren().addAll(new Label("Estado:"), filtro,
+                new Label("Responsable:"), filtroResponsable,
+                new Label("Ordenar por:"), ordenamiento);
         cuerpo.getChildren().addAll(bienvenida, estadisticas, encabezado, filtros, lista);
         ScrollPane scroll = new ScrollPane(cuerpo);
         scroll.setFitToWidth(true);
@@ -170,7 +197,7 @@ public final class TaskBloomApp extends Application {
         contadorTerminadas.setText(String.valueOf(tareas.stream().filter(t -> t.obtenerEstado() instanceof EstadoTerminada).count()));
         String texto = busqueda.getText() == null ? "" : busqueda.getText().trim().toLowerCase(Locale.ROOT);
         lista.getChildren().clear();
-        tareas.stream()
+        organizador.organizar(tareas).stream()
                 .filter(t -> t.obtenerTitulo().toLowerCase(Locale.ROOT).contains(texto))
                 .filter(t -> filtro.getValue().equals("Todas") || t.obtenerEstado().obtenerNombre().equals(filtro.getValue()))
                 .forEach(t -> lista.getChildren().add(crearTarjetaTarea(t)));
@@ -332,11 +359,22 @@ public final class TaskBloomApp extends Application {
         subtareas.setPrefRowCount(3);
         subtareas.setPromptText("Una subtarea por línea (solo al crear)");
         subtareas.setDisable(tarea != null);
+        HBox responsables = new HBox(10);
+        List<CheckBox> seleccionResponsables = equipo.stream().map(usuario -> {
+            CheckBox casilla = new CheckBox(usuario.obtenerNombre());
+            casilla.setUserData(usuario);
+            casilla.setSelected(tarea == null
+                    ? usuario == equipo.get(0)
+                    : tarea.obtenerResponsables().stream().anyMatch(u -> u.obtenerId().equals(usuario.obtenerId())));
+            return casilla;
+        }).toList();
+        responsables.getChildren().addAll(seleccionResponsables);
         VBox formulario = new VBox(9,
                 new Label("Título"), titulo,
                 new Label("Descripción"), descripcion,
                 new Label("Prioridad"), prioridad,
                 new Label("Fecha límite"), fecha,
+                new Label("Responsables (selecciona al menos uno)"), responsables,
                 new Label("Subtareas (una por línea)"), subtareas);
         formulario.setPadding(new Insets(14));
         formulario.setPrefWidth(360);
@@ -349,14 +387,23 @@ public final class TaskBloomApp extends Application {
         }
         int valorPrioridad = switch (prioridad.getValue()) { case "Alta" -> 3; case "Baja" -> 1; default -> 2; };
         LocalDateTime vencimiento = fecha.getValue().atTime(23, 59);
+        List<Usuario> personasElegidas = seleccionResponsables.stream()
+                .filter(CheckBox::isSelected)
+                .map(c -> (Usuario) c.getUserData())
+                .toList();
+        if (personasElegidas.isEmpty()) {
+            mostrarMensaje("Responsable requerido", "Selecciona al menos un responsable.");
+            return;
+        }
         if (tarea != null) {
             gestor.modificarTarea(tarea.obtenerId(), titulo.getText().trim(), descripcion.getText(), valorPrioridad, vencimiento);
+            tarea.asignarResponsables(personasElegidas);
         } else {
             List<String> lineas = subtareas.getText().lines().map(String::trim).filter(s -> !s.isEmpty()).toList();
             ComponenteTarea creada = lineas.isEmpty()
                     ? gestor.crearTareaSimple(titulo.getText().trim(), descripcion.getText(), valorPrioridad, vencimiento)
                     : gestor.crearTareaCompuesta(titulo.getText().trim(), descripcion.getText(), valorPrioridad, vencimiento);
-            creada.asignarResponsables(List.of(equipo.get(0)));
+            creada.asignarResponsables(personasElegidas);
             for (String linea : lineas) {
                 TareaSimple hija = gestor.crearTareaSimple(linea, "", 2, vencimiento);
                 gestor.agregarSubtarea(creada.obtenerId(), hija.obtenerId());
