@@ -2,6 +2,7 @@ package com.taskbloom.observer;
 
 import com.taskbloom.model.Usuario;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -17,7 +18,8 @@ public final class Notificacion {
     public Notificacion(Usuario usuario, Recordatorio recordatorio) {
         this(UUID.randomUUID().toString(), usuario, recordatorio.obtenerId(),
                 "La tarea «" + recordatorio.obtenerTarea().obtenerTitulo() + "» vence el "
-                        + recordatorio.obtenerTarea().obtenerFechaLimite().toLocalDate() + ".",
+                        + recordatorio.obtenerTarea().obtenerFechaLimite()
+                            .format(DateTimeFormatter.ofPattern("dd/MM/yyyy 'a las' HH:mm")) + ".",
                 LocalDateTime.now(), false);
     }
 

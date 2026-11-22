@@ -37,6 +37,7 @@ public final class GestorRecordatorios implements SujetoRecordatorio {
     /** Un recordatorio activo por tarea: el mismo registro se reprograma al editar la fecha. */
     public Recordatorio programarRecordatorio(ComponenteTarea tarea, int horasAnticipacion) {
         Objects.requireNonNull(tarea);
+        if (horasAnticipacion < 0) throw new IllegalArgumentException("La anticipación no puede ser negativa");
         Recordatorio existente = buscarPorTarea(tarea.obtenerId());
         if (existente != null) {
             // Sin cambios: mantener el aviso ya enviado y evitar notificaciones repetidas.

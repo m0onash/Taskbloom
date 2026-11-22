@@ -33,6 +33,7 @@ import javafx.stage.Stage;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
@@ -274,7 +275,7 @@ public final class TaskBloomApp extends Application {
         Label detalle = new Label(tarea.obtenerDescripcion());
         detalle.getStyleClass().add("muted");
         detalle.setWrapText(true);
-        Label fecha = new Label("▢  " + tarea.obtenerFechaLimite().format(DateTimeFormatter.ofPattern("d MMM yyyy", new Locale("es", "ES")))
+        Label fecha = new Label("▢  " + tarea.obtenerFechaLimite().format(DateTimeFormatter.ofPattern("d MMM yyyy · HH:mm", new Locale("es", "ES")))
                 + "     •     " + nombresResponsables(tarea));
         fecha.getStyleClass().add("card-meta");
         contenido.getChildren().addAll(titulo, detalle, fecha);
@@ -414,6 +415,22 @@ public final class TaskBloomApp extends Application {
         prioridad.getItems().addAll("Alta", "Media", "Baja");
         prioridad.setValue(tarea == null ? "Media" : etiquetaPrioridad(tarea.obtenerPrioridad()));
         DatePicker fecha = new DatePicker(tarea == null ? LocalDate.now().plusDays(7) : tarea.obtenerFechaLimite().toLocalDate());
+        // Selector horario de 24 horas, con precisión de un minuto. Las tareas anteriores
+        // conservan su hora de 23:59 (o cualquier hora guardada anteriormente).
+        LocalTime horaInicial = tarea == null ? LocalTime.of(18, 0) : tarea.obtenerFechaLimite().toLocalTime();
+        ComboBox<String> hora = new ComboBox<>();
+        ComboBox<String> minuto = new ComboBox<>();
+        for (int h = 0; h < 24; h++) hora.getItems().add(String.format("%02d", h));
+        for (int m = 0; m < 60; m++) minuto.getItems().add(String.format("%02d", m));
+        hora.setValue(String.format("%02d", horaInicial.getHour()));
+        minuto.setValue(String.format("%02d", horaInicial.getMinute()));
+        hora.setPrefWidth(80);
+        minuto.setPrefWidth(80);
+        HBox selectorHora = new HBox(7, hora, new Label(":"), minuto);
+        selectorHora.setAlignment(Pos.CENTER_LEFT);
+        Label notaHora = new Label("Formato de 24 horas. Los avisos se calculan desde esta fecha y hora.");
+        notaHora.getStyleClass().add("muted");
+        notaHora.setWrapText(true);
         TextArea subtareas = new TextArea();
         subtareas.setPrefRowCount(3);
         subtareas.setPromptText("Una subtarea por línea (solo al crear)");
@@ -429,7 +446,7 @@ public final class TaskBloomApp extends Application {
         }).toList();
         responsables.getChildren().addAll(seleccionResponsables);
         ComboBox<String> aviso = new ComboBox<>();
-        aviso.getItems().addAll("Sin recordatorio", "1 hora antes", "6 horas antes", "24 horas antes",
+        aviso.getItems().addAll("Sin recordatorio", "Al vencer", "1 hora antes", "6 horas antes", "24 horas antes",
                 "48 horas antes", "7 días antes");
         Recordatorio previo = tarea == null ? null : gestorRecordatorios.buscarPorTarea(tarea.obtenerId());
         aviso.setValue(previo == null ? (tarea == null ? "24 horas antes" : "Sin recordatorio")
@@ -439,6 +456,7 @@ public final class TaskBloomApp extends Application {
                 new Label("Descripción"), descripcion,
                 new Label("Prioridad"), prioridad,
                 new Label("Fecha límite"), fecha,
+                new Label("Hora límite (HH:mm)"), selectorHora, notaHora,
                 new Label("Recordatorio"), aviso,
                 new Label("Responsables (selecciona al menos uno)"), responsables,
                 new Label("Subtareas (una por línea)"), subtareas);
@@ -452,7 +470,8 @@ public final class TaskBloomApp extends Application {
             return;
         }
         int valorPrioridad = switch (prioridad.getValue()) { case "Alta" -> 3; case "Baja" -> 1; default -> 2; };
-        LocalDateTime vencimiento = fecha.getValue().atTime(23, 59);
+        LocalDateTime vencimiento = fecha.getValue().atTime(
+                Integer.parseInt(hora.getValue()), Integer.parseInt(minuto.getValue()));
         List<Usuario> personasElegidas = seleccionResponsables.stream()
                 .filter(CheckBox::isSelected)
                 .map(c -> (Usuario) c.getUserData())
@@ -670,6 +689,7 @@ public final class TaskBloomApp extends Application {
 
     private static String etiquetaAnticipacion(int horas) {
         return switch (horas) {
+            case 0 -> "Al vencer";
             case 1 -> "1 hora antes";
             case 6 -> "6 horas antes";
             case 24 -> "24 horas antes";
@@ -681,6 +701,7 @@ public final class TaskBloomApp extends Application {
 
     private static Integer horasDeAviso(String etiqueta) {
         return switch (etiqueta == null ? "" : etiqueta) {
+            case "Al vencer" -> 0;
             case "1 hora antes" -> 1;
             case "6 horas antes" -> 6;
             case "24 horas antes" -> 24;
@@ -754,9 +775,11 @@ public final class TaskBloomApp extends Application {
         for (Recordatorio r : ordenados) {
             Label titulo = new Label("✿  " + r.obtenerTarea().obtenerTitulo());
             titulo.getStyleClass().add("task-title");
-            Label detalle = new Label("Aviso: " + r.obtenerFechaAviso().format(DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm"))
+            Label detalle = new Label("Vence: " + r.obtenerTarea().obtenerFechaLimite().format(DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm"))
+                    + "   ·   Aviso: " + r.obtenerFechaAviso().format(DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm"))
                     + "   ·   " + etiquetaAnticipacion(r.obtenerAnticipacionHoras())
                     + "   ·   " + (r.estaEnviado() ? "Enviado" : "Pendiente"));
+            detalle.setWrapText(true);
             detalle.getStyleClass().add("muted");
             Label destinatarios = new Label("Responsables: " + nombresResponsables(r.obtenerTarea()));
             destinatarios.getStyleClass().add("muted");

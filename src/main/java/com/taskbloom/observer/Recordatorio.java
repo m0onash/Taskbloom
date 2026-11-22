@@ -21,7 +21,7 @@ public final class Recordatorio {
     public Recordatorio(String id, ComponenteTarea tarea, int anticipacionHoras, boolean enviado) {
         this.id = Objects.requireNonNull(id);
         this.tarea = Objects.requireNonNull(tarea);
-        if (anticipacionHoras <= 0) throw new IllegalArgumentException("La anticipación debe ser positiva");
+        if (anticipacionHoras < 0) throw new IllegalArgumentException("La anticipación no puede ser negativa");
         this.anticipacionHoras = anticipacionHoras;
         this.fechaAviso = tarea.obtenerFechaLimite().minusHours(anticipacionHoras);
         this.enviado = enviado;
