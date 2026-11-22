@@ -5,6 +5,10 @@ import com.taskbloom.model.TareaCompuesta;
 import com.taskbloom.model.TareaSimple;
 import com.taskbloom.model.Usuario;
 import com.taskbloom.service.GestorTareas;
+import com.taskbloom.persistence.DatosGuardados;
+import com.taskbloom.persistence.RepositorioTareas;
+import com.taskbloom.persistence.RepositorioTareasSQLite;
+import javafx.application.Platform;
 import com.taskbloom.strategy.FiltrarPorResponsable;
 import com.taskbloom.strategy.OrdenarPorFecha;
 import com.taskbloom.strategy.OrdenarPorPrioridad;
@@ -26,16 +30,20 @@ import javafx.stage.Stage;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.Locale;
 
 /** Presentación JavaFX: delega Composite, State y Strategy al modelo. */
 public final class TaskBloomApp extends Application {
     private final GestorTareas gestor = new GestorTareas();
     private final OrganizadorTareas organizador = new OrganizadorTareas();
-    private final List<Usuario> equipo = List.of(
-            new Usuario("u1", "Ana"), new Usuario("u2", "Carlos"),
-            new Usuario("u3", "Sofía"), new Usuario("u4", "Marcos"));
+    private final List<Usuario> equipo = new ArrayList<>();
+    private final RepositorioTareas repositorio = new RepositorioTareasSQLite();
+    private Usuario usuarioActual;
+    private final Button botonPerfil = new Button();
+    private final Label tituloBienvenida = new Label();
     private final VBox lista = new VBox(11);
     private final Label contadorTotal = new Label();
     private final Label contadorPendientes = new Label();
@@ -50,7 +58,17 @@ public final class TaskBloomApp extends Application {
     private boolean modoOscuro = false;
 
     @Override public void start(Stage stage) {
-        cargarEjemplos();
+        // Sin datos precargados: restaurar únicamente lo que el usuario haya guardado.
+        try {
+            DatosGuardados datos = repositorio.cargarEstado(gestor);
+            equipo.addAll(datos.equipo());
+            usuarioActual = equipo.stream().filter(u -> u.obtenerId().equals(datos.idUsuarioActual()))
+                    .findFirst().orElse(null);
+            modoOscuro = datos.modoOscuro();
+        } catch (RuntimeException error) {
+            mostrarError("Error al abrir los datos", error);
+            throw error; // No abrir con datos vacíos si la BD existente no se puede leer.
+        }
         organizador.establecerOrdenamiento(new OrdenarPorPrioridad());
         raiz = new BorderPane();
         raiz.getStyleClass().add("root-app");
@@ -58,12 +76,16 @@ public final class TaskBloomApp extends Application {
         raiz.setCenter(crearContenido());
         escena = new Scene(raiz, 1180, 770);
         escena.getStylesheets().add(getClass().getResource("/styles/taskbloom.css").toExternalForm());
+        if (modoOscuro) raiz.getStyleClass().add("dark");
         stage.setTitle("TaskBloom · Tu jardín de tareas");
         stage.setScene(escena);
         stage.setMinWidth(850);
         stage.setMinHeight(580);
         stage.show();
+        actualizarFiltroResponsables();
+        actualizarPerfil();
         actualizarVista();
+        if (usuarioActual == null) Platform.runLater(this::abrirPerfil);
     }
 
     private VBox crearBarraLateral() {
@@ -78,16 +100,19 @@ public final class TaskBloomApp extends Application {
         Button inicio = menu("⌂    Inicio", true);
         Button tareas = menu("☷    Mis tareas", false);
         tareas.setOnAction(e -> busqueda.requestFocus());
-        Label proximamente = new Label("Próximamente: calendario,\nrecordatorios y equipo");
+        Button personas = menu("♙    Equipo", false);
+        personas.setOnAction(e -> abrirEquipo());
+        Label proximamente = new Label("Próximamente: calendario y recordatorios");
         proximamente.getStyleClass().add("sidebar-hint");
         Region espacio = new Region();
         VBox.setVgrow(espacio, Priority.ALWAYS);
         VBox tarjeta = new VBox(7, new Label("🌸"), new Label("Tu jardín está creciendo"),
                 new Label("Cada tarea completada\nhace florecer tu proyecto."));
         tarjeta.getStyleClass().add("garden-box");
-        Label perfil = new Label("AM   Alex Morgan");
-        perfil.getStyleClass().add("profile");
-        lateral.getChildren().addAll(marca, grupo, inicio, tareas, proximamente, espacio, tarjeta, perfil);
+        botonPerfil.getStyleClass().addAll("nav-item", "profile");
+        botonPerfil.setMaxWidth(Double.MAX_VALUE);
+        botonPerfil.setOnAction(e -> abrirPerfil());
+        lateral.getChildren().addAll(marca, grupo, inicio, tareas, personas, proximamente, espacio, tarjeta, botonPerfil);
         return lateral;
     }
 
@@ -110,13 +135,14 @@ public final class TaskBloomApp extends Application {
         busqueda.textProperty().addListener((obs, viejo, nuevo) -> actualizarVista());
         Region separador = new Region();
         HBox.setHgrow(separador, Priority.ALWAYS);
-        Button tema = new Button("☾  Tema");
+        Button tema = new Button(modoOscuro ? "☀  Tema" : "☾  Tema");
         tema.getStyleClass().add("secondary-button");
         tema.setOnAction(e -> {
             modoOscuro = !modoOscuro;
             if (modoOscuro) raiz.getStyleClass().add("dark");
             else raiz.getStyleClass().remove("dark");
             tema.setText(modoOscuro ? "☀  Tema" : "☾  Tema");
+            persistir();
         });
         Button nueva = new Button("＋  Nueva tarea");
         nueva.getStyleClass().add("primary-button");
@@ -128,11 +154,10 @@ public final class TaskBloomApp extends Application {
         cuerpo.getStyleClass().add("content");
         Label fecha = new Label(LocalDate.now().format(DateTimeFormatter.ofPattern("EEEE, d 'de' MMMM", new Locale("es", "ES"))).toUpperCase());
         fecha.getStyleClass().add("eyebrow");
-        Label titulo = new Label("Buenos días, Alex");
-        titulo.getStyleClass().add("page-title");
+        tituloBienvenida.getStyleClass().add("page-title");
         Label subtitulo = new Label("Cada tarea completada hace florecer tu jardín.");
         subtitulo.getStyleClass().add("muted");
-        VBox bienvenida = new VBox(6, fecha, titulo, subtitulo);
+        VBox bienvenida = new VBox(6, fecha, tituloBienvenida, subtitulo);
         HBox estadisticas = new HBox(12,
                 tarjetaEstadistica("Total de tareas", contadorTotal, "✿"),
                 tarjetaEstadistica("Pendientes", contadorPendientes, "▢"),
@@ -150,7 +175,6 @@ public final class TaskBloomApp extends Application {
         filtro.setValue("Todas");
         filtro.setOnAction(e -> actualizarVista());
         filtroResponsable.getItems().add("Todos");
-        equipo.forEach(usuario -> filtroResponsable.getItems().add(usuario.obtenerNombre()));
         filtroResponsable.setValue("Todos");
         filtroResponsable.setOnAction(e -> {
             Usuario elegido = equipo.stream()
@@ -241,6 +265,8 @@ public final class TaskBloomApp extends Application {
             if (!tarea.cambiarEstado(estadoPorNombre(nombreEstado))) {
                 mostrarMensaje("Transición no permitida", "No es posible pasar de "
                         + tarea.obtenerEstado().obtenerNombre() + " a " + nombreEstado + ".");
+            } else {
+                persistir();
             }
             actualizarVista();
         });
@@ -254,6 +280,7 @@ public final class TaskBloomApp extends Application {
             Alert confirmar = new Alert(Alert.AlertType.CONFIRMATION, "¿Eliminar «" + tarea.obtenerTitulo() + "»?", ButtonType.YES, ButtonType.NO);
             if (confirmar.showAndWait().orElse(ButtonType.NO) == ButtonType.YES) {
                 gestor.eliminarTarea(tarea.obtenerId());
+                persistir();
                 actualizarVista();
             }
         });
@@ -273,7 +300,7 @@ public final class TaskBloomApp extends Application {
                 Button avanzar = new Button("Avanzar");
                 avanzar.getStyleClass().add("small-button");
                 avanzar.setDisable(hija.obtenerEstado() instanceof EstadoTerminada);
-                avanzar.setOnAction(e -> { avanzarEstado(hija); actualizarVista(); });
+                avanzar.setOnAction(e -> { avanzarEstado(hija); persistir(); actualizarVista(); });
                 Region aire = new Region();
                 HBox.setHgrow(aire, Priority.ALWAYS);
                 linea.getChildren().addAll(marca, texto, aire, avanzar);
@@ -343,6 +370,11 @@ public final class TaskBloomApp extends Application {
     }
 
     private void abrirFormulario(ComponenteTarea tarea) {
+        if (equipo.isEmpty()) {
+            mostrarMensaje("Configura tu perfil", "Primero crea tu perfil para asignar responsables a las tareas.");
+            abrirPerfil();
+            if (equipo.isEmpty()) return;
+        }
         Dialog<ButtonType> dialogo = new Dialog<>();
         dialogo.setTitle(tarea == null ? "Nueva tarea" : "Editar tarea");
         dialogo.getDialogPane().getButtonTypes().addAll(ButtonType.CANCEL, ButtonType.OK);
@@ -364,7 +396,7 @@ public final class TaskBloomApp extends Application {
             CheckBox casilla = new CheckBox(usuario.obtenerNombre());
             casilla.setUserData(usuario);
             casilla.setSelected(tarea == null
-                    ? usuario == equipo.get(0)
+                    ? usuarioActual != null && usuario.obtenerId().equals(usuarioActual.obtenerId())
                     : tarea.obtenerResponsables().stream().anyMatch(u -> u.obtenerId().equals(usuario.obtenerId())));
             return casilla;
         }).toList();
@@ -409,6 +441,7 @@ public final class TaskBloomApp extends Application {
                 gestor.agregarSubtarea(creada.obtenerId(), hija.obtenerId());
             }
         }
+        persistir();
         actualizarVista();
     }
 
@@ -419,48 +452,159 @@ public final class TaskBloomApp extends Application {
         aviso.showAndWait();
     }
 
-    private void cargarEjemplos() {
-        LocalDate hoy = LocalDate.now();
-        TareaCompuesta principal = gestor.crearTareaCompuesta("Rediseñar la página principal",
-                "Actualizar la jerarquía visual y preparar los componentes.", 3, hoy.plusDays(3).atTime(23, 59));
-        principal.cambiarEstado(new EstadoEnCurso());
-        principal.asignarResponsables(List.of(equipo.get(0), equipo.get(1)));
-        agregarEjemplo(principal, "Definir estructura", true);
-        agregarEjemplo(principal, "Crear wireframes", true);
-        agregarEjemplo(principal, "Diseñar componentes", false);
-        agregarEjemplo(principal, "Revisión final", false);
-
-        TareaCompuesta campana = gestor.crearTareaCompuesta("Preparar campaña de primavera",
-                "Piezas y textos para el lanzamiento de temporada.", 2, hoy.plusDays(6).atTime(23, 59));
-        campana.cambiarEstado(new EstadoEnCurso());
-        campana.cambiarEstado(new EstadoEnRevision());
-        campana.asignarResponsables(List.of(equipo.get(2)));
-        agregarEjemplo(campana, "Redactar mensajes", true);
-        agregarEjemplo(campana, "Diseñar piezas", true);
-        agregarEjemplo(campana, "Programar publicaciones", false);
-
-        TareaSimple documentacion = gestor.crearTareaSimple("Actualizar documentación",
-                "Documentar el flujo de trabajo del equipo.", 1, hoy.plusDays(10).atTime(23, 59));
-        documentacion.asignarResponsables(List.of(equipo.get(3)));
-
-        TareaCompuesta reporte = gestor.crearTareaCompuesta("Publicar reporte mensual",
-                "Consolidar resultados y compartirlos con el equipo.", 3, hoy.minusDays(2).atTime(23, 59));
-        reporte.cambiarEstado(new EstadoEnCurso());
-        reporte.cambiarEstado(new EstadoEnRevision());
-        reporte.cambiarEstado(new EstadoTerminada());
-        reporte.asignarResponsables(List.of(equipo.get(0)));
-        agregarEjemplo(reporte, "Consolidar métricas", true);
-        agregarEjemplo(reporte, "Preparar conclusiones", true);
+    /** Crea o edita el usuario local; no es un servicio de autenticación. */
+    private void abrirPerfil() {
+        TextInputDialog dialogo = new TextInputDialog(usuarioActual == null ? "" : usuarioActual.obtenerNombre());
+        dialogo.setTitle("Mi perfil");
+        dialogo.setHeaderText(usuarioActual == null ? "¡Bienvenido/a! Configura tu nombre" : "Editar mi nombre");
+        dialogo.setContentText("Nombre:");
+        var respuesta = dialogo.showAndWait();
+        if (respuesta.isEmpty()) return;
+        String nombre = respuesta.get().trim();
+        if (nombre.isBlank()) {
+            mostrarMensaje("Nombre requerido", "Debes escribir un nombre para tu perfil.");
+            return;
+        }
+        if (nombreDuplicado(nombre, usuarioActual)) {
+            mostrarMensaje("Nombre duplicado", "Ya existe un miembro del equipo con ese nombre.");
+            return;
+        }
+        if (usuarioActual == null) {
+            usuarioActual = new Usuario(UUID.randomUUID().toString(), nombre);
+            equipo.add(usuarioActual);
+        } else {
+            usuarioActual.actualizarNombre(nombre);
+        }
+        persistir();
+        actualizarPerfil();
+        actualizarFiltroResponsables();
+        actualizarVista();
     }
 
-    private void agregarEjemplo(TareaCompuesta padre, String titulo, boolean terminada) {
-        TareaSimple hija = gestor.crearTareaSimple(titulo, "", 2, padre.obtenerFechaLimite());
-        if (terminada) {
-            hija.cambiarEstado(new EstadoEnCurso());
-            hija.cambiarEstado(new EstadoEnRevision());
-            hija.cambiarEstado(new EstadoTerminada());
+    /** Administra el equipo desde la aplicación, sin nombres fijos en el código. */
+    private void abrirEquipo() {
+        Dialog<ButtonType> dialogo = new Dialog<>();
+        dialogo.setTitle("Gestionar equipo");
+        dialogo.setHeaderText("Añade, cambia el nombre o elimina miembros del equipo");
+        dialogo.getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
+
+        ListView<Usuario> miembros = new ListView<>();
+        miembros.setPrefHeight(215);
+        miembros.setCellFactory(lista -> new ListCell<>() {
+            @Override protected void updateItem(Usuario usuario, boolean vacio) {
+                super.updateItem(usuario, vacio);
+                setText(vacio || usuario == null ? null : usuario.obtenerNombre()
+                        + (usuarioActual != null && usuario.obtenerId().equals(usuarioActual.obtenerId()) ? "  (tú)" : ""));
+            }
+        });
+        miembros.getItems().setAll(equipo);
+        TextField campoNombre = new TextField();
+        campoNombre.setPromptText("Nombre del miembro");
+        Button agregar = new Button("Añadir");
+        Button renombrar = new Button("Renombrar");
+        Button eliminar = new Button("Eliminar");
+        agregar.setOnAction(e -> {
+            String nombre = campoNombre.getText().trim();
+            if (nombre.isBlank() || nombreDuplicado(nombre, null)) {
+                mostrarMensaje("Nombre inválido", "Escribe un nombre no vacío que no esté repetido.");
+                return;
+            }
+            Usuario nuevo = new Usuario(UUID.randomUUID().toString(), nombre);
+            equipo.add(nuevo);
+            miembros.getItems().setAll(equipo);
+            miembros.getSelectionModel().select(nuevo);
+            campoNombre.clear();
+            cambiosEnEquipo();
+        });
+        renombrar.setOnAction(e -> {
+            Usuario elegido = miembros.getSelectionModel().getSelectedItem();
+            if (elegido == null) { mostrarMensaje("Selecciona un miembro", "Primero selecciona a quién renombrar."); return; }
+            String nombre = campoNombre.getText().trim();
+            if (nombre.isBlank() || nombreDuplicado(nombre, elegido)) {
+                mostrarMensaje("Nombre inválido", "Escribe un nombre no vacío que no esté repetido.");
+                return;
+            }
+            elegido.actualizarNombre(nombre);
+            miembros.refresh();
+            campoNombre.clear();
+            cambiosEnEquipo();
+        });
+        eliminar.setOnAction(e -> {
+            Usuario elegido = miembros.getSelectionModel().getSelectedItem();
+            if (elegido == null) { mostrarMensaje("Selecciona un miembro", "Primero selecciona a quién eliminar."); return; }
+            if (usuarioActual != null && elegido.obtenerId().equals(usuarioActual.obtenerId())) {
+                mostrarMensaje("Tu perfil", "Tu usuario principal no puede eliminarse desde Equipo; puedes renombrarlo desde Mi perfil.");
+                return;
+            }
+            Alert confirmar = new Alert(Alert.AlertType.CONFIRMATION,
+                    "¿Eliminar a «" + elegido.obtenerNombre() + "» del equipo? También se quitará de las tareas asignadas.",
+                    ButtonType.YES, ButtonType.NO);
+            if (confirmar.showAndWait().orElse(ButtonType.NO) != ButtonType.YES) return;
+            equipo.remove(elegido);
+            for (ComponenteTarea tarea : gestor.obtenerTareasPrincipales()) quitarResponsable(tarea, elegido.obtenerId());
+            miembros.getItems().setAll(equipo);
+            cambiosEnEquipo();
+        });
+        VBox contenido = new VBox(9,
+                new Label("Miembros del equipo"), miembros,
+                new Label("Nombre"), campoNombre,
+                new HBox(8, agregar, renombrar, eliminar),
+                new Label("Eliminar un miembro no elimina sus tareas."));
+        contenido.setPadding(new Insets(12));
+        contenido.setPrefWidth(390);
+        dialogo.getDialogPane().setContent(contenido);
+        dialogo.showAndWait();
+    }
+
+    private void quitarResponsable(ComponenteTarea tarea, String idUsuario) {
+        tarea.asignarResponsables(tarea.obtenerResponsables().stream()
+                .filter(u -> !u.obtenerId().equals(idUsuario)).toList());
+        for (ComponenteTarea hija : tarea.obtenerSubtareas()) quitarResponsable(hija, idUsuario);
+    }
+
+    private boolean nombreDuplicado(String nombre, Usuario ignorar) {
+        return equipo.stream().anyMatch(u -> u != ignorar && u.obtenerNombre().equalsIgnoreCase(nombre));
+    }
+
+    private void cambiosEnEquipo() {
+        persistir();
+        actualizarFiltroResponsables();
+        actualizarPerfil();
+        actualizarVista();
+    }
+
+    private void actualizarPerfil() {
+        String nombre = usuarioActual == null ? "Configurar perfil" : usuarioActual.obtenerNombre();
+        botonPerfil.setText("☺  " + nombre + "  ✎");
+        tituloBienvenida.setText(usuarioActual == null ? "Bienvenido/a a TaskBloom" : "Hola, " + nombre);
+    }
+
+    private void actualizarFiltroResponsables() {
+        String anterior = filtroResponsable.getValue();
+        filtroResponsable.getItems().clear();
+        filtroResponsable.getItems().add("Todos");
+        equipo.forEach(u -> filtroResponsable.getItems().add(u.obtenerNombre()));
+        filtroResponsable.setValue(filtroResponsable.getItems().contains(anterior) ? anterior : "Todos");
+        Usuario elegido = equipo.stream().filter(u -> u.obtenerNombre().equals(filtroResponsable.getValue()))
+                .findFirst().orElse(null);
+        organizador.establecerFiltro(elegido == null ? null : new FiltrarPorResponsable(elegido.obtenerId()));
+    }
+
+    private void persistir() {
+        try {
+            repositorio.guardarEstado(gestor, equipo, usuarioActual, modoOscuro);
+        } catch (RuntimeException error) {
+            mostrarError("No se pudieron guardar los cambios", error);
         }
-        gestor.agregarSubtarea(padre.obtenerId(), hija.obtenerId());
+    }
+
+    private void mostrarError(String titulo, Throwable error) {
+        Alert aviso = new Alert(Alert.AlertType.ERROR,
+                error.getMessage() + (error.getCause() == null ? "" : "\n" + error.getCause().getMessage()),
+                ButtonType.OK);
+        aviso.setTitle(titulo);
+        aviso.setHeaderText(null);
+        aviso.showAndWait();
     }
 
     public static void main(String[] args) { launch(args); }

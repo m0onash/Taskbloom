@@ -35,6 +35,13 @@ public final class GestorTareas {
         return tarea;
     }
 
+    /** Carga objetos que ya tienen identificadores persistentes, sin generar IDs nuevos. */
+    public void registrarTareaRestaurada(ComponenteTarea tarea) {
+        if (registro.containsKey(tarea.obtenerId()))
+            throw new IllegalArgumentException("ID de tarea duplicado: " + tarea.obtenerId());
+        registrar(tarea);
+    }
+
     private void registrar(ComponenteTarea tarea) {
         registro.put(tarea.obtenerId(), tarea);
         tareasPrincipales.add(tarea);
