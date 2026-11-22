@@ -3,6 +3,9 @@ package com.taskbloom.service;
 import com.taskbloom.model.ComponenteTarea;
 import com.taskbloom.model.TareaCompuesta;
 import com.taskbloom.model.TareaSimple;
+import com.taskbloom.state.EstadoEnCurso;
+import com.taskbloom.state.EstadoEnRevision;
+import com.taskbloom.state.EstadoTerminada;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -58,6 +61,35 @@ public final class GestorTareas {
         }
         compuesta.agregarSubtarea(subtarea);
         tareasPrincipales.remove(subtarea);
+    }
+
+    /** Convierte una tarea simple principal en compuesta conservando ID, datos y estado.
+     *  Así la UI permite añadir subtareas a tareas creadas sin ellas. */
+    public TareaCompuesta convertirEnCompuesta(String id) {
+        ComponenteTarea existente = obtenerTarea(id);
+        if (existente instanceof TareaCompuesta compuesta) return compuesta;
+        int posicion = tareasPrincipales.indexOf(existente);
+        if (posicion < 0) throw new IllegalArgumentException(
+                "Solo se puede convertir una tarea principal");
+        TareaCompuesta nueva = new TareaCompuesta(existente.obtenerId(),
+                existente.obtenerTitulo(), existente.obtenerDescripcion(),
+                existente.obtenerPrioridad(), existente.obtenerFechaLimite());
+        nueva.asignarResponsables(existente.obtenerResponsables());
+        if (existente.obtenerEstado() instanceof EstadoEnCurso
+                || existente.obtenerEstado() instanceof EstadoEnRevision
+                || existente.obtenerEstado() instanceof EstadoTerminada) {
+            nueva.cambiarEstado(new EstadoEnCurso());
+        }
+        if (existente.obtenerEstado() instanceof EstadoEnRevision
+                || existente.obtenerEstado() instanceof EstadoTerminada) {
+            nueva.cambiarEstado(new EstadoEnRevision());
+        }
+        if (existente.obtenerEstado() instanceof EstadoTerminada) {
+            nueva.cambiarEstado(new EstadoTerminada());
+        }
+        registro.put(id, nueva);
+        tareasPrincipales.set(posicion, nueva);
+        return nueva;
     }
 
     public void modificarTarea(String id, String titulo, String descripcion,

@@ -91,3 +91,35 @@
 }
 .dark .reminder-card { -fx-background-color: #282328; -fx-border-color: #49343e; }
 .dark .notification-unread { -fx-background-color: #542438; -fx-text-fill: #ffe0e9; }
+
+/* Etapa 6: calidad de vida y vistas reales. */
+.garden-progress { -fx-font-size: 11px; -fx-text-fill: #7a7c74; -fx-wrap-text: true; }
+.garden-bar { -fx-pref-height: 6px; -fx-accent: #7d9374; }
+.garden-bar > .track { -fx-background-color: #e7e2df; -fx-background-radius: 8; }
+.garden-bar > .bar { -fx-background-color: #7d9374; -fx-background-radius: 8; -fx-background-insets: 0; }
+.empty-box { -fx-border-color: #d8d4cb; -fx-border-style: dashed; -fx-border-radius: 12; -fx-padding: 25; }
+.empty-box .empty { -fx-padding: 0; -fx-font-size: 13px; -fx-wrap-text: true; }
+.task-card.task-overdue { -fx-border-color: #dca4ad; }
+.overdue-tag { -fx-font-size: 10px; -fx-font-weight: bold; -fx-background-color: #fae4e6; -fx-text-fill: #a24056; -fx-background-radius: 8; -fx-padding: 3 7; }
+.soon-tag { -fx-font-size: 10px; -fx-font-weight: bold; -fx-background-color: #f9efd8; -fx-text-fill: #9b7137; -fx-background-radius: 8; -fx-padding: 3 7; }
+.priority-media { -fx-background-color: #f8eedc; -fx-text-fill: #8c6c2a; }
+.priority-baja { -fx-background-color: #e8f0e6; -fx-text-fill: #52704e; }
+.task-dialog { -fx-background-color: #fffef9; }
+.task-dialog .scroll-pane { -fx-background-color: transparent; }
+.task-dialog .scroll-pane > .viewport { -fx-background-color: #fffef9; }
+.task-dialog .text-field, .task-dialog .text-area, .task-dialog .date-picker,
+.task-dialog .combo-box { -fx-border-color: #e4e2d9; -fx-border-radius: 6; -fx-background-radius: 6; }
+.task-dialog .button:focused, .task-dialog .text-field:focused { -fx-border-color: #b68999; }
+.dark .garden-progress { -fx-text-fill: #a79da1; }
+.dark .empty-box { -fx-border-color: #383138; }
+.dark .overdue-tag { -fx-background-color: #57283b; -fx-text-fill: #ffd8e0; }
+.dark .soon-tag { -fx-background-color: #4b3b22; -fx-text-fill: #ffe0a2; }
+.dark .task-card.task-overdue { -fx-border-color: #8c4059; }
+.dark .priority-media { -fx-background-color: #4c3a23; -fx-text-fill: #eac790; }
+.dark .priority-baja { -fx-background-color: #2e3c2e; -fx-text-fill: #b6d5a7; }
+.dark.task-dialog { -fx-background-color: #201d20; -fx-base: #201d20; }
+.dark.task-dialog .scroll-pane > .viewport { -fx-background-color: #201d20; }
+.dark.task-dialog .label { -fx-text-fill: #f0e8eb; }
+.dark.task-dialog .muted { -fx-text-fill: #a79da1; }
+.dark.task-dialog .text-field, .dark.task-dialog .text-area,
+.dark.task-dialog .date-picker, .dark.task-dialog .combo-box { -fx-text-fill: #f0e8eb; -fx-background-color: #282328; }

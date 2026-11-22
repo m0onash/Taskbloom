@@ -8,6 +8,7 @@ import com.taskbloom.service.GestorTareas;
 import com.taskbloom.observer.*;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
+import javafx.event.ActionEvent;
 import javafx.util.Duration;
 import com.taskbloom.persistence.DatosGuardados;
 import com.taskbloom.persistence.RepositorioTareas;
@@ -30,6 +31,7 @@ import javafx.scene.shape.Circle;
 import javafx.scene.shape.Ellipse;
 import javafx.scene.shape.Line;
 import javafx.stage.Stage;
+import javafx.stage.FileChooser;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -43,6 +45,10 @@ import java.util.Map;
 import java.util.HashMap;
 import java.util.Set;
 import java.util.Comparator;
+import java.util.HashSet;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 
 /** Presentación JavaFX: delega Composite, State, Strategy y Observer al dominio. */
 public final class TaskBloomApp extends Application {
@@ -64,6 +70,8 @@ public final class TaskBloomApp extends Application {
     private final Label contadorPendientes = new Label();
     private final Label contadorActivas = new Label();
     private final Label contadorTerminadas = new Label();
+    private final Label progresoJardin = new Label();
+    private final ProgressBar barraJardin = new ProgressBar(0);
     private final TextField busqueda = new TextField();
     private final ComboBox<String> filtro = new ComboBox<>();
     private final ComboBox<String> filtroResponsable = new ComboBox<>();
@@ -121,19 +129,27 @@ public final class TaskBloomApp extends Application {
         Button inicio = menu("⌂    Inicio", true);
         Button tareas = menu("☷    Mis tareas", false);
         tareas.setOnAction(e -> busqueda.requestFocus());
+        Button calendario = menu("▢    Calendario", false);
+        calendario.setOnAction(e -> abrirCalendario());
         Button personas = menu("♙    Equipo", false);
         personas.setOnAction(e -> abrirEquipo());
         Button avisos = menu("♧    Recordatorios", false);
         avisos.setOnAction(e -> abrirRecordatorios());
+        Button exportar = menu("↓    Exportar CSV", false);
+        exportar.setOnAction(e -> exportarCSV());
         Region espacio = new Region();
         VBox.setVgrow(espacio, Priority.ALWAYS);
-        VBox tarjeta = new VBox(7, new Label("🌸"), new Label("Tu jardín está creciendo"),
-                new Label("Cada tarea completada\nhace florecer tu proyecto."));
+        progresoJardin.getStyleClass().add("garden-progress");
+        barraJardin.setMaxWidth(Double.MAX_VALUE);
+        barraJardin.getStyleClass().add("garden-bar");
+        VBox tarjeta = new VBox(9, new Label("🌸"), new Label("Tu jardín está creciendo"),
+                progresoJardin, barraJardin);
         tarjeta.getStyleClass().add("garden-box");
         botonPerfil.getStyleClass().addAll("nav-item", "profile");
         botonPerfil.setMaxWidth(Double.MAX_VALUE);
         botonPerfil.setOnAction(e -> abrirPerfil());
-        lateral.getChildren().addAll(marca, grupo, inicio, tareas, personas, avisos, espacio, tarjeta, botonPerfil);
+        lateral.getChildren().addAll(marca, grupo, inicio, tareas, calendario,
+                personas, avisos, exportar, espacio, tarjeta, botonPerfil);
         return lateral;
     }
 
@@ -242,25 +258,55 @@ public final class TaskBloomApp extends Application {
         contadorTotal.setText(String.valueOf(tareas.size()));
         contadorPendientes.setText(String.valueOf(tareas.stream().filter(t -> t.obtenerEstado() instanceof EstadoPendiente).count()));
         contadorActivas.setText(String.valueOf(tareas.stream().filter(t -> t.obtenerEstado() instanceof EstadoEnCurso || t.obtenerEstado() instanceof EstadoEnRevision).count()));
-        contadorTerminadas.setText(String.valueOf(tareas.stream().filter(t -> t.obtenerEstado() instanceof EstadoTerminada).count()));
+        long completadas = tareas.stream().filter(t -> t.obtenerEstado() instanceof EstadoTerminada).count();
+        contadorTerminadas.setText(String.valueOf(completadas));
+        double proporcion = tareas.isEmpty() ? 0 : (double) completadas / tareas.size();
+        progresoJardin.setText(tareas.isEmpty() ? "Tu jardín comienza con la primera tarea"
+                : "Has completado " + completadas + " de " + tareas.size() + " tareas (" + Math.round(proporcion * 100) + "%)");
+        barraJardin.setProgress(proporcion);
         String texto = busqueda.getText() == null ? "" : busqueda.getText().trim().toLowerCase(Locale.ROOT);
         actualizarContadorAvisos();
         actualizarProximoAviso();
         lista.getChildren().clear();
         organizador.organizar(tareas).stream()
-                .filter(t -> t.obtenerTitulo().toLowerCase(Locale.ROOT).contains(texto))
+                .filter(t -> texto.isEmpty()
+                        || t.obtenerTitulo().toLowerCase(Locale.ROOT).contains(texto)
+                        || t.obtenerDescripcion().toLowerCase(Locale.ROOT).contains(texto)
+                        || t.obtenerSubtareas().stream().anyMatch(h -> h.obtenerTitulo().toLowerCase(Locale.ROOT).contains(texto))
+                        || t.obtenerResponsables().stream().anyMatch(u -> u.obtenerNombre().toLowerCase(Locale.ROOT).contains(texto)))
                 .filter(t -> filtro.getValue().equals("Todas") || t.obtenerEstado().obtenerNombre().equals(filtro.getValue()))
                 .forEach(t -> lista.getChildren().add(crearTarjetaTarea(t)));
         if (lista.getChildren().isEmpty()) {
-            Label vacio = new Label("Aún no hay brotes aquí. Prueba otro filtro o crea una tarea.");
+            Label vacio = new Label(tareas.isEmpty()
+                    ? "Aún no tienes tareas. ¡Planta tu primer brote!"
+                    : "No hay tareas que coincidan con los filtros.");
             vacio.getStyleClass().add("empty");
-            lista.getChildren().add(vacio);
+            Button accion = new Button(tareas.isEmpty() ? "＋ Crear tarea" : "Limpiar filtros");
+            accion.getStyleClass().add("primary-button");
+            accion.setOnAction(e -> {
+                if (tareas.isEmpty()) abrirFormulario(null);
+                else {
+                    busqueda.clear();
+                    filtro.setValue("Todas");
+                    filtroResponsable.setValue("Todos");
+                    ordenamiento.setValue("Prioridad");
+                    actualizarVista();
+                }
+            });
+            VBox estadoVacio = new VBox(12, vacio, accion);
+            estadoVacio.setAlignment(Pos.CENTER);
+            estadoVacio.getStyleClass().add("empty-box");
+            lista.getChildren().add(estadoVacio);
         }
     }
 
     private VBox crearTarjetaTarea(ComponenteTarea tarea) {
         VBox caja = new VBox(10);
         caja.getStyleClass().add("task-card");
+        if (!(tarea.obtenerEstado() instanceof EstadoTerminada)
+                && tarea.obtenerFechaLimite().isBefore(LocalDateTime.now())) {
+            caja.getStyleClass().add("task-overdue");
+        }
         HBox fila = new HBox(15);
         fila.setAlignment(Pos.CENTER_LEFT);
         Node flor = crearFlor(calcularProgreso(tarea));
@@ -269,9 +315,22 @@ public final class TaskBloomApp extends Application {
         titulo.setAlignment(Pos.CENTER_LEFT);
         Label nombre = new Label(tarea.obtenerTitulo());
         nombre.getStyleClass().add("task-title");
+        nombre.setWrapText(true);
         Label prioridad = new Label(etiquetaPrioridad(tarea.obtenerPrioridad()));
-        prioridad.getStyleClass().add("priority-tag");
+        prioridad.getStyleClass().addAll("priority-tag", "priority-" + etiquetaPrioridad(tarea.obtenerPrioridad()).toLowerCase(Locale.ROOT));
         titulo.getChildren().addAll(nombre, prioridad);
+        LocalDateTime ahora = LocalDateTime.now();
+        if (!(tarea.obtenerEstado() instanceof EstadoTerminada)) {
+            Label urgencia = null;
+            if (tarea.obtenerFechaLimite().isBefore(ahora)) {
+                urgencia = new Label("Vencida");
+                urgencia.getStyleClass().add("overdue-tag");
+            } else if (!tarea.obtenerFechaLimite().isAfter(ahora.plusHours(24))) {
+                urgencia = new Label("Vence pronto");
+                urgencia.getStyleClass().add("soon-tag");
+            }
+            if (urgencia != null) titulo.getChildren().add(urgencia);
+        }
         Label detalle = new Label(tarea.obtenerDescripcion());
         detalle.getStyleClass().add("muted");
         detalle.setWrapText(true);
@@ -431,11 +490,21 @@ public final class TaskBloomApp extends Application {
         Label notaHora = new Label("Formato de 24 horas. Los avisos se calculan desde esta fecha y hora.");
         notaHora.getStyleClass().add("muted");
         notaHora.setWrapText(true);
-        TextArea subtareas = new TextArea();
-        subtareas.setPrefRowCount(3);
-        subtareas.setPromptText("Una subtarea por línea (solo al crear)");
-        subtareas.setDisable(tarea != null);
-        HBox responsables = new HBox(10);
+        // Cada campo mantiene la referencia de la subtarea original; así editar su
+        // título no destruye su ID ni el estado que ya tenía guardado.
+        List<FilaSubtarea> filasSubtareas = new ArrayList<>();
+        VBox editorSubtareas = new VBox(7);
+        if (tarea != null) {
+            for (ComponenteTarea hija : tarea.obtenerSubtareas())
+                agregarFilaSubtarea(editorSubtareas, filasSubtareas, hija);
+        }
+        Button anadirSubtarea = new Button("＋ Añadir subtarea");
+        anadirSubtarea.getStyleClass().add("small-button");
+        anadirSubtarea.setOnAction(e -> agregarFilaSubtarea(editorSubtareas, filasSubtareas, null));
+        Label notaSubtareas = new Label("Puedes renombrar, añadir o quitar subtareas. Sus estados se conservan al renombrar.");
+        notaSubtareas.setWrapText(true);
+        notaSubtareas.getStyleClass().add("muted");
+        FlowPane responsables = new FlowPane(10, 8);
         List<CheckBox> seleccionResponsables = equipo.stream().map(usuario -> {
             CheckBox casilla = new CheckBox(usuario.obtenerNombre());
             casilla.setUserData(usuario);
@@ -459,16 +528,30 @@ public final class TaskBloomApp extends Application {
                 new Label("Hora límite (HH:mm)"), selectorHora, notaHora,
                 new Label("Recordatorio"), aviso,
                 new Label("Responsables (selecciona al menos uno)"), responsables,
-                new Label("Subtareas (una por línea)"), subtareas);
+                new Label("Subtareas"), editorSubtareas, anadirSubtarea, notaSubtareas);
         formulario.setPadding(new Insets(14));
         formulario.setPrefWidth(360);
-        dialogo.getDialogPane().setContent(formulario);
-        guardar.disableProperty().bind(titulo.textProperty().isEmpty());
+        ScrollPane scrollFormulario = new ScrollPane(formulario);
+        scrollFormulario.setFitToWidth(true);
+        scrollFormulario.setPrefViewportHeight(510);
+        scrollFormulario.setPrefViewportWidth(430);
+        dialogo.getDialogPane().setContent(scrollFormulario);
+        prepararDialogo(dialogo);
+        // La ventana permanece abierta si los datos son inválidos.
+        guardar.addEventFilter(ActionEvent.ACTION, e -> {
+            String mensaje = null;
+            if (titulo.getText().trim().isEmpty()) mensaje = "Escribe un título para la tarea.";
+            else if (fecha.getValue() == null) mensaje = "Selecciona una fecha límite.";
+            else if (seleccionResponsables.stream().noneMatch(CheckBox::isSelected))
+                mensaje = "Selecciona al menos un responsable.";
+            else if (filasSubtareas.stream().anyMatch(f -> f.campo().getText().trim().isEmpty()))
+                mensaje = "Escribe un título en cada subtarea o quita las filas vacías.";
+            if (mensaje != null) {
+                e.consume();
+                mostrarMensaje("Revisa el formulario", mensaje);
+            }
+        });
         if (dialogo.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) return;
-        if (fecha.getValue() == null) {
-            mostrarMensaje("Fecha requerida", "Selecciona una fecha límite.");
-            return;
-        }
         int valorPrioridad = switch (prioridad.getValue()) { case "Alta" -> 3; case "Baja" -> 1; default -> 2; };
         LocalDateTime vencimiento = fecha.getValue().atTime(
                 Integer.parseInt(hora.getValue()), Integer.parseInt(minuto.getValue()));
@@ -482,25 +565,76 @@ public final class TaskBloomApp extends Application {
         }
         ComponenteTarea tareaGuardada;
         if (tarea != null) {
-            gestor.modificarTarea(tarea.obtenerId(), titulo.getText().trim(), descripcion.getText(), valorPrioridad, vencimiento);
-            tarea.asignarResponsables(personasElegidas);
             tareaGuardada = tarea;
+            if (!(tarea instanceof TareaCompuesta) && !filasSubtareas.isEmpty()) {
+                // De simple a compuesta sin cambiar el ID ni perder su estado.
+                tareaGuardada = gestor.convertirEnCompuesta(tarea.obtenerId());
+                gestorRecordatorios.actualizarReferenciaTarea(tareaGuardada);
+            }
+            gestor.modificarTarea(tareaGuardada.obtenerId(), titulo.getText().trim(),
+                    descripcion.getText(), valorPrioridad, vencimiento);
+            tareaGuardada.asignarResponsables(personasElegidas);
+            if (tareaGuardada instanceof TareaCompuesta) {
+                Set<String> mantenerIds = new HashSet<>();
+                for (FilaSubtarea fila : filasSubtareas) {
+                    if (fila.original() != null) mantenerIds.add(fila.original().obtenerId());
+                }
+                for (ComponenteTarea hija : List.copyOf(tareaGuardada.obtenerSubtareas())) {
+                    if (!mantenerIds.contains(hija.obtenerId())) {
+                        quitarAvisoConNotificaciones(hija.obtenerId());
+                        gestor.eliminarTarea(hija.obtenerId());
+                    }
+                }
+            }
         } else {
-            List<String> lineas = subtareas.getText().lines().map(String::trim).filter(s -> !s.isEmpty()).toList();
-            ComponenteTarea creada = lineas.isEmpty()
+            tareaGuardada = filasSubtareas.isEmpty()
                     ? gestor.crearTareaSimple(titulo.getText().trim(), descripcion.getText(), valorPrioridad, vencimiento)
                     : gestor.crearTareaCompuesta(titulo.getText().trim(), descripcion.getText(), valorPrioridad, vencimiento);
-            creada.asignarResponsables(personasElegidas);
-            tareaGuardada = creada;
-            for (String linea : lineas) {
-                TareaSimple hija = gestor.crearTareaSimple(linea, "", 2, vencimiento);
-                gestor.agregarSubtarea(creada.obtenerId(), hija.obtenerId());
+            tareaGuardada.asignarResponsables(personasElegidas);
+        }
+        for (FilaSubtarea fila : filasSubtareas) {
+            String nombreSubtarea = fila.campo().getText().trim();
+            if (fila.original() != null) {
+                ComponenteTarea original = fila.original();
+                gestor.modificarTarea(original.obtenerId(), nombreSubtarea,
+                        original.obtenerDescripcion(), original.obtenerPrioridad(), original.obtenerFechaLimite());
+            } else {
+                TareaSimple hija = gestor.crearTareaSimple(nombreSubtarea, "", 2, vencimiento);
+                hija.asignarResponsables(personasElegidas);
+                gestor.agregarSubtarea(tareaGuardada.obtenerId(), hija.obtenerId());
             }
         }
         configurarAviso(tareaGuardada, horasDeAviso(aviso.getValue()));
         persistir();
         comprobarRecordatorios();
         actualizarVista();
+    }
+
+    private record FilaSubtarea(ComponenteTarea original, TextField campo) { }
+
+    private void agregarFilaSubtarea(VBox editor, List<FilaSubtarea> filas, ComponenteTarea original) {
+        TextField campo = new TextField(original == null ? "" : original.obtenerTitulo());
+        campo.setPromptText("Nombre de la subtarea");
+        HBox.setHgrow(campo, Priority.ALWAYS);
+        Button quitar = new Button("✕");
+        quitar.setTooltip(new Tooltip("Quitar subtarea"));
+        quitar.getStyleClass().add("small-button");
+        HBox linea = new HBox(7, campo, quitar);
+        linea.setAlignment(Pos.CENTER_LEFT);
+        FilaSubtarea fila = new FilaSubtarea(original, campo);
+        filas.add(fila);
+        editor.getChildren().add(linea);
+        quitar.setOnAction(e -> {
+            filas.remove(fila);
+            editor.getChildren().remove(linea);
+        });
+    }
+
+    private void prepararDialogo(Dialog<?> dialogo) {
+        DialogPane panel = dialogo.getDialogPane();
+        panel.getStylesheets().add(getClass().getResource("/styles/taskbloom.css").toExternalForm());
+        panel.getStyleClass().add("task-dialog");
+        if (modoOscuro) panel.getStyleClass().add("dark");
     }
 
     private void mostrarMensaje(String titulo, String contenido) {
@@ -613,6 +747,7 @@ public final class TaskBloomApp extends Application {
         contenido.setPadding(new Insets(12));
         contenido.setPrefWidth(390);
         dialogo.getDialogPane().setContent(contenido);
+        prepararDialogo(dialogo);
         dialogo.showAndWait();
     }
 
@@ -637,7 +772,9 @@ public final class TaskBloomApp extends Application {
     private void actualizarPerfil() {
         String nombre = usuarioActual == null ? "Configurar perfil" : usuarioActual.obtenerNombre();
         botonPerfil.setText("☺  " + nombre + "  ✎");
-        tituloBienvenida.setText(usuarioActual == null ? "Bienvenido/a a TaskBloom" : "Hola, " + nombre);
+        String saludo = LocalTime.now().getHour() < 12 ? "Buenos días" :
+                LocalTime.now().getHour() < 19 ? "Buenas tardes" : "Buenas noches";
+        tituloBienvenida.setText(usuarioActual == null ? "Bienvenido/a a TaskBloom" : saludo + ", " + nombre);
     }
 
     private void actualizarFiltroResponsables() {
@@ -763,6 +900,83 @@ public final class TaskBloomApp extends Application {
         proximoAviso.getChildren().addAll(subtitulo, detalle, ver);
     }
 
+    /** Agenda real de vencimientos a partir de las tareas guardadas (sin datos de ejemplo). */
+    private void abrirCalendario() {
+        Dialog<ButtonType> dialogo = new Dialog<>();
+        dialogo.setTitle("Calendario de tareas");
+        dialogo.setHeaderText("Agenda de vencimientos");
+        dialogo.getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
+        DatePicker dia = new DatePicker(LocalDate.now());
+        CheckBox soloDia = new CheckBox("Mostrar solo la fecha seleccionada");
+        VBox eventos = new VBox(8);
+        Runnable refrescar = () -> {
+            eventos.getChildren().clear();
+            List<ComponenteTarea> ordenadas = gestor.obtenerTareasPrincipales().stream()
+                    .filter(t -> !soloDia.isSelected()
+                            || t.obtenerFechaLimite().toLocalDate().equals(dia.getValue()))
+                    .sorted(Comparator.comparing(ComponenteTarea::obtenerFechaLimite)).toList();
+            if (ordenadas.isEmpty()) eventos.getChildren().add(new Label("No hay tareas para mostrar."));
+            for (ComponenteTarea t : ordenadas) {
+                Label titulo = new Label(t.obtenerTitulo());
+                titulo.getStyleClass().add("task-title");
+                Label detalle = new Label(t.obtenerFechaLimite().format(
+                        DateTimeFormatter.ofPattern("EEEE d MMM, HH:mm", new Locale("es", "ES")))
+                        + "  ·  " + t.obtenerEstado().obtenerNombre() + "  ·  " + nombresResponsables(t));
+                detalle.getStyleClass().add("muted");
+                detalle.setWrapText(true);
+                VBox fila = new VBox(5, titulo, detalle);
+                fila.getStyleClass().add("task-card");
+                eventos.getChildren().add(fila);
+            }
+        };
+        soloDia.selectedProperty().addListener((obs, old, val) -> refrescar.run());
+        dia.valueProperty().addListener((obs, old, val) -> refrescar.run());
+        refrescar.run();
+        ScrollPane scroll = new ScrollPane(eventos);
+        scroll.setFitToWidth(true);
+        scroll.setPrefViewportHeight(390);
+        scroll.setPrefViewportWidth(520);
+        VBox contenido = new VBox(12, new HBox(12, dia, soloDia), scroll);
+        contenido.setPadding(new Insets(12));
+        dialogo.getDialogPane().setContent(contenido);
+        prepararDialogo(dialogo);
+        dialogo.showAndWait();
+    }
+
+    /** Copia de exportación: no modifica SQLite ni cambia los estados de las tareas. */
+    private void exportarCSV() {
+        FileChooser selector = new FileChooser();
+        selector.setTitle("Exportar tareas a CSV");
+        selector.setInitialFileName("taskbloom-tareas.csv");
+        selector.getExtensionFilters().add(new FileChooser.ExtensionFilter("CSV (*.csv)", "*.csv"));
+        java.io.File destino = selector.showSaveDialog(escena.getWindow());
+        if (destino == null) return;
+        StringBuilder csv = new StringBuilder("Tipo,ID,ID padre,Título,Descripción,Estado,Prioridad,Fecha límite,Responsables\r\n");
+        for (ComponenteTarea t : gestor.obtenerTareasPrincipales()) escribirFilaCSV(csv, t, "");
+        try {
+            Files.writeString(destino.toPath(), "\uFEFF" + csv, StandardCharsets.UTF_8);
+            mostrarMensaje("Exportación completada", "CSV guardado en: " + destino.getAbsolutePath());
+        } catch (IOException error) {
+            mostrarError("No se pudo exportar el CSV", error);
+        }
+    }
+
+    private void escribirFilaCSV(StringBuilder csv, ComponenteTarea t, String padre) {
+        List<String> valores = List.of(t instanceof TareaCompuesta ? "Compuesta" : "Simple",
+                t.obtenerId(), padre, t.obtenerTitulo(), t.obtenerDescripcion(),
+                t.obtenerEstado().obtenerNombre(), etiquetaPrioridad(t.obtenerPrioridad()),
+                t.obtenerFechaLimite().toString(), nombresResponsables(t));
+        csv.append(String.join(",", valores.stream().map(TaskBloomApp::escaparCSV).toList())).append("\r\n");
+        for (ComponenteTarea hija : t.obtenerSubtareas()) escribirFilaCSV(csv, hija, t.obtenerId());
+    }
+
+    private static String escaparCSV(String valor) {
+        // Evitar que aplicaciones de hojas de cálculo interpreten un título como fórmula.
+        String seguro = !valor.isEmpty() && "=+-@".indexOf(valor.charAt(0)) >= 0
+                ? "'" + valor : valor;
+        return "\"" + seguro.replace("\"", "\"\"") + "\"";
+    }
+
     private void abrirRecordatorios() {
         Dialog<ButtonType> dialogo = new Dialog<>();
         dialogo.setTitle("Recordatorios de tareas");
@@ -792,6 +1006,7 @@ public final class TaskBloomApp extends Application {
         scroll.setPrefViewportHeight(350);
         scroll.setPrefViewportWidth(500);
         dialogo.getDialogPane().setContent(scroll);
+        prepararDialogo(dialogo);
         dialogo.showAndWait();
     }
 
@@ -820,6 +1035,7 @@ public final class TaskBloomApp extends Application {
         scroll.setPrefViewportWidth(460);
         scroll.setPrefViewportHeight(330);
         dialogo.getDialogPane().setContent(scroll);
+        prepararDialogo(dialogo);
         if (dialogo.showAndWait().orElse(ButtonType.CLOSE) == leidas) {
             gestorNotificaciones.marcarTodasComoLeidas(usuarioActual);
             persistir();

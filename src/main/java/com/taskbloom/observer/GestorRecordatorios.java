@@ -63,6 +63,12 @@ public final class GestorRecordatorios implements SujetoRecordatorio {
                 .findFirst().orElse(null);
     }
 
+    /** Mantiene el objeto recordatorio y sus notificaciones al convertir una tarea. */
+    public void actualizarReferenciaTarea(ComponenteTarea tarea) {
+        Recordatorio recordatorio = buscarPorTarea(tarea.obtenerId());
+        if (recordatorio != null) recordatorio.actualizarReferencia(tarea);
+    }
+
     public void quitarRecordatorio(String tareaId) {
         recordatorios.removeIf(r -> r.obtenerTarea().obtenerId().equals(tareaId));
     }

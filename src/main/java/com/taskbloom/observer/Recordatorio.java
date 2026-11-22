@@ -10,7 +10,7 @@ public final class Recordatorio {
     private final String id;
     private final LocalDateTime fechaAviso;
     private boolean enviado;
-    private final ComponenteTarea tarea;
+    private ComponenteTarea tarea;
     private final int anticipacionHoras;
 
     public Recordatorio(ComponenteTarea tarea, int anticipacionHoras) {
@@ -33,6 +33,14 @@ public final class Recordatorio {
     public ComponenteTarea obtenerTarea() { return tarea; }
     public int obtenerAnticipacionHoras() { return anticipacionHoras; }
     public void marcarComoEnviado() { enviado = true; }
+
+    /** Conserva la programación al reemplazar un objeto por su versión Composite. */
+    void actualizarReferencia(ComponenteTarea nuevaTarea) {
+        Objects.requireNonNull(nuevaTarea);
+        if (!tarea.obtenerId().equals(nuevaTarea.obtenerId()))
+            throw new IllegalArgumentException("La tarea debe conservar su ID");
+        tarea = nuevaTarea;
+    }
 
 
 }
